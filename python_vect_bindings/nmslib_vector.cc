@@ -293,7 +293,7 @@ Py_BEGIN_ALLOW_THREADS
     RangeQuery<T> rangeQ(*space_, query, radius);
     index_->Search(&rangeQ, -1);
     
-    const ObjectVector& objs = *(&rangeQ)->Result();
+    const ObjectVector& objs = *rangeQ.Result();
     // const vector<T>&  dists = *(&rangeQ)->ResultDists();
     for (size_t i = 0; i < objs.size(); ++i) {
       ids.insert(ids.begin(), objs[i]->id());
