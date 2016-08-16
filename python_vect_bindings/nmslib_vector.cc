@@ -56,6 +56,7 @@ static PyMethodDef nmslibMethods[] = {
   {"loadIndex", loadIndex, METH_VARARGS},
   {"setQueryTimeParams", setQueryTimeParams, METH_VARARGS},
   {"knnQuery", knnQuery, METH_VARARGS},
+  {"rangeQuery", rangeQuery, METH_VARARGS},
   {"freeIndex", freeIndex, METH_VARARGS},
   {NULL, NULL}
 };
@@ -206,8 +207,7 @@ class IndexWrapper {
         index_(nullptr),
         space_(nullptr)
     {
-    space_ = SpaceFactoryRegistry<T>::Instance()
-        .CreateSpace(space_type_.c_str(), space_param);
+    space_ = SpaceFactoryRegistry<T>::Instance().CreateSpace(space_type_.c_str(), space_param);
   }
 
   ~IndexWrapper() {
@@ -226,7 +226,7 @@ class IndexWrapper {
   inline int GetDistType() { return dist_type_; }
   inline int GetDataType() { return data_type_; }
   inline size_t GetDataPointQty() { return data_.size(); }
-
+  
   void AddDataPoint(const Object* z) {
     data_.push_back(z);
   }
@@ -272,6 +272,35 @@ Py_BEGIN_ALLOW_THREADS
     }
     delete res;
 Py_END_ALLOW_THREADS
+    PyObject* z = PyList_New(ids.size());
+    if (!z) {
+      return NULL;
+    }
+    for (int i = static_cast<int>(ids.size())-1; i >= 0; --i) {
+      PyObject* v = PyInt_FromLong(ids[i]);
+      if (!v) {
+        Py_DECREF(z);
+        return NULL;
+      }
+      PyList_SET_ITEM(z, i, v);
+    }
+    return z;
+  }
+
+  PyObject* RANGEQuery(float radius, const Object* query) {
+    IntVector ids;
+Py_BEGIN_ALLOW_THREADS
+    RangeQuery<T> rangeQ(*space_, query, radius);
+    index_->Search(&rangeQ, -1);
+    
+    const ObjectVector& objs = *(&rangeQ)->Result();
+    // const vector<T>&  dists = *(&rangeQ)->ResultDists();
+    for (size_t i = 0; i < objs.size(); ++i) {
+      ids.insert(ids.begin(), objs[i]->id());
+    }
+    
+Py_END_ALLOW_THREADS
+    
     PyObject* z = PyList_New(ids.size());
     if (!z) {
       return NULL;
@@ -529,6 +558,37 @@ PyObject* knnQuery(PyObject* self, PyObject* args) {
     return _knnQuery<float>(ptr, k, data);
   } else {
     return _knnQuery<int>(ptr, k, data);
+  }
+}
+
+template <typename T>
+PyObject* _rangeQuery(PyObject* ptr, float eps, PyObject* data) {
+  IndexWrapper<T>* index = reinterpret_cast<IndexWrapper<T>*>(PyLong_AsVoidPtr(ptr));
+  auto iter = NMSLIB_DATA_PARSERS.find(index->GetDataType());
+  if (iter == NMSLIB_DATA_PARSERS.end()) {
+    raise << "unknown data type - " << index->GetDataType();
+    return NULL;
+  }
+  auto res = (*iter->second)(data, 0, index->GetDistType());
+  if (!res.first) {
+    return NULL;
+  }
+  std::unique_ptr<const Object> query_obj(res.second);
+  return index->RANGEQuery(eps, query_obj.get());
+}
+
+PyObject* rangeQuery(PyObject* self, PyObject* args) {
+  PyObject* ptr;
+  float eps;
+  PyObject* data;
+  if (!PyArg_ParseTuple(args, "OfO", &ptr, &eps, &data)) {
+    raise << "Error reading parameters (expecting: index ref, eps, query)";
+    return NULL;
+  }
+  if (IsDistFloat(ptr)) {
+    return _rangeQuery<float>(ptr, eps, data);
+  } else {
+    return _rangeQuery<int>(ptr, eps, data);
   }
 }
 
